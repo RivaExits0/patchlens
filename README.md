@@ -47,6 +47,58 @@ cargo install --path crates/patchlens-cli
 
 ---
 
+### Windows Support
+
+Patchlens tamamen **Windows PE32+ (x64)** dosyalarını destekler ve Windows üzerinde çalışabilir. Tüm bağımlılıklar (`goblin`, `capstone`, `mmap2`, `tokio`, `rmcp`) çapraz platformdadır; herhangi bir Windows'a özel derleme bayrağı gerekmez.
+
+#### Windows'da kurulum
+
+```powershell
+# Rust toolchain yoksa önce yükleyin (https://rustup.rs/)
+# Sonra:
+
+git clone https://github.com/RivaExits0/patchlens.git
+cd patchlens
+
+# CLI'yi derleyip kurun
+cargo install --path crates/patchlens-cli
+
+# MCP sunucusunu derleyip kurun (Claude Desktop için)
+cargo install --path crates/patchlens-mcp
+```
+
+#### Windows'da CLI kullanımı
+
+PowerShell'de komutlar aynıdır (yollar `\` veya `/` ile belirtilebilir):
+
+```powershell
+patchlens diff old.exe new.exe --format json
+patchlens sigs old.exe new.exe --signatures sigs.toml --suggest --sarif report.sarif
+patchlens explain old.exe new.exe --function 0x140001000
+patchlens export old.exe new.exe --signatures sigs.toml --format header --out offsets.h
+```
+
+#### Windows'da MCP (Claude Desktop)
+
+`%APPDATA%\Claude\claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "patchlens": {
+      "command": "patchlens-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+#### CI
+
+GitHub Actions CI her push'ta **ubuntu-latest** ve **windows-latest** üzerinde `cargo fmt --check`, `cargo clippy -D warnings`, `cargo build` ve `cargo test` çalıştırır. Bu sayede Windows uygunluğu sürekli test edilir.
+
+---
+
 ## CLI Usage
 
 ```bash
