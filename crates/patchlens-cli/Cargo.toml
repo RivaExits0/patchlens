@@ -1,0 +1,24 @@
+[package]
+name = "patchlens-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "CLI for patchlens binary diffing and signature analysis"
+
+[[bin]]
+name = "patchlens"
+path = "src/main.rs"
+
+[dependencies]
+patchlens-core = { path = "../patchlens-core" }
+patchlens-report = { path = "../patchlens-report" }
+clap = { workspace = true, features = ["derive", "env"] }
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

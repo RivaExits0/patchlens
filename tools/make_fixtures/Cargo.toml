@@ -1,0 +1,19 @@
+[package]
+name = "make_fixtures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Generate synthetic PE fixtures for patchlens testing"
+
+[lib]
+name = "make_fixtures"
+path = "src/lib.rs"
+
+[[bin]]
+name = "make_fixtures"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }

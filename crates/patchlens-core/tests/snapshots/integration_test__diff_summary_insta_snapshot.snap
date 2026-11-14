@@ -1,0 +1,5 @@
+---
+source: crates/patchlens-core/tests/integration_test.rs
+expression: "serde_json::to_string(&patchlens_core::report::summarize_diff(&diff)).unwrap()"
+---
+{"added":0,"modified":1,"new_total":2,"old_total":2,"removed":0,"unchanged":1}

@@ -1,0 +1,28 @@
+# Cargo
+target/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test fixtures (generated)
+tests/fixtures/*.exe
+tests/fixtures/*.toml
+
+# Release artifacts
+release/
+dist/
+
+# Coverage
+coverage/
+*.profraw
+
+# Benchmarks
+benches/target/
