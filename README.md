@@ -2,44 +2,60 @@
 
 [![CI](https://github.com/RivaExits0/patchlens/actions/workflows/ci.yml/badge.svg)](https://github.com/RivaExits0/patchlens/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org/)
+[![Rust 1.75+](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org/)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-orange)](https://modelcontextprotocol.io/)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)]()
 
-**Patchlens** is a binary diffing and signature analysis tool for reverse engineering. It compares two builds of a binary (old vs new) and tells you exactly what changed at the function level — with confidence scores, signature verification, and automated signature migration.
+**Patchlens** is a static binary diff and signature analysis tool for reverse engineering. It compares two PE64 (x64) builds and tells you exactly what changed at the function level — with confidence scores, signature verification (`ok` / `moved` / `broken` / `ambiguous`), and automated signature migration. It ships both a **CLI** and an **MCP server** (5 tools over stdio) for use from Claude Desktop or any MCP client.
 
-> **Problem**: When a game or application updates, modders and security researchers need to know: Which AOB signatures broke? Which functions changed? Which offsets moved? Patchlens answers these questions automatically.
+> **Turkish / Türkçe:** Patchlens, iki PE64 (x64) binary build'ini statik olarak karşılaştırıp fonksiyon düzeyinde neyin değiştiğini söyler. Güven skorları, imza doğrulaması (`ok` / `moved` / `broken` / `ambiguous`) ve otomatik imza göçü (migration) sunar. CLI ve MCP sunucusu (5 stdio aracı) içerir; Claude Desktop veya herhangi bir MCP istemcisiyle kullanılabilir.
 
 ---
 
-## Features
+## 🎯 What can it do?
 
-| Feature | Description |
-|---------|-------------|
-| **Binary Diffing** | Function-level diff with staged matching: exact hash → string/import similarity → call graph propagation → fuzzy opcode similarity |
+| Domain | Key Operations |
+|--------|----------------|
+| **Binary Diffing** | Function-level staged matching: exact hash → string/import similarity → call graph propagation → fuzzy opcode similarity |
 | **Signature Engine** | AOB (wildcard) and export-name signatures; status: `ok` / `moved` / `broken` / `ambiguous` |
-| **Auto Migration** | For broken signatures, finds the corresponding function in the new build and generates a resilient wildcard signature that survives recompilation |
-| **Change Explanation** | Line-by-line disassembly diff with pagination; outputs structured JSON for MCP/LLM consumption |
+| **Auto Migration** | For broken signatures, finds the matching function in the new build and generates a resilient wildcard signature that survives recompilation |
+| **Change Explanation** | Line-by-line disassembly diff with pagination; structured JSON output for MCP/LLM consumption |
 | **CI Reports** | SARIF 2.1.0 (GitHub Actions), JSON, C header (`#define`), Cheat Engine `.CT` |
 | **MCP Server** | 5 tools via stdio: `diff_builds`, `check_signatures`, `explain_change`, `export_offsets`, `ci_report` |
-| **Cross-platform** | PE32+ (x64) on Linux/Windows/macOS; no binary execution |
+| **Safety** | Static analysis only — binaries are never executed; read-only file access via `mmap` |
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
 
-### Installation
+### 1. Install
 
+#### From crates.io (when published)
 ```bash
-# From crates.io (when published)
 cargo install patchlens
-
-# From source
-git clone https://github.com/RivaExits0/patchlens.git
-cd patchlens
-cargo install --path crates/patchlens-cli
+cargo install patchlens-mcp   # MCP server for Claude Desktop
 ```
 
-### External Dependencies (Optional)
+#### From GitHub
+```bash
+git clone https://github.com/RivaExits0/patchlens.git
+cd patchlens
+
+# CLI
+cargo install --path crates/patchlens-cli
+
+# MCP server (stdio)
+cargo install --path crates/patchlens-mcp
+```
+
+#### From source (development)
+```bash
+cargo build --workspace
+cargo test --workspace
+cargo run --bin make_fixtures   # generate synthetic PE64 test fixtures
+```
+
+### 2. External Dependencies (Optional)
 | Tool | Purpose |
 |------|---------|
 | `gdb` | Not used (static analysis only) |
@@ -47,71 +63,22 @@ cargo install --path crates/patchlens-cli
 
 ---
 
-### Windows Support
-
-Patchlens tamamen **Windows PE32+ (x64)** dosyalarını destekler ve Windows üzerinde çalışabilir. Tüm bağımlılıklar (`goblin`, `capstone`, `mmap2`, `tokio`, `rmcp`) çapraz platformdadır; herhangi bir Windows'a özel derleme bayrağı gerekmez.
-
-#### Windows'da kurulum
-
-```powershell
-# Rust toolchain yoksa önce yükleyin (https://rustup.rs/)
-# Sonra:
-
-git clone https://github.com/RivaExits0/patchlens.git
-cd patchlens
-
-# CLI'yi derleyip kurun
-cargo install --path crates/patchlens-cli
-
-# MCP sunucusunu derleyip kurun (Claude Desktop için)
-cargo install --path crates/patchlens-mcp
-```
-
-#### Windows'da CLI kullanımı
-
-PowerShell'de komutlar aynıdır (yollar `\` veya `/` ile belirtilebilir):
-
-```powershell
-patchlens diff old.exe new.exe --format json
-patchlens sigs old.exe new.exe --signatures sigs.toml --suggest --sarif report.sarif
-patchlens explain old.exe new.exe --function 0x140001000
-patchlens export old.exe new.exe --signatures sigs.toml --format header --out offsets.h
-```
-
-#### Windows'da MCP (Claude Desktop)
-
-`%APPDATA%\Claude\claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "patchlens": {
-      "command": "patchlens-mcp",
-      "args": []
-    }
-  }
-}
-```
-
-#### CI
-
-GitHub Actions CI her push'ta **ubuntu-latest** ve **windows-latest** üzerinde `cargo fmt --check`, `cargo clippy -D warnings`, `cargo build` ve `cargo test` çalıştırır. Bu sayede Windows uygunluğu sürekli test edilir.
-
----
-
-## CLI Usage
+## 🔧 CLI Usage
 
 ```bash
-# Diff two builds
-patchlens diff old.exe new.exe --format json --min-score 0.8 --limit 50
+# Diff two builds (text output)
+patchlens diff old.exe new.exe --format text
 
-# Check signatures against new build
+# Diff as JSON with pagination
+patchlens diff old.exe new.exe --format json --min-score 0.8 --limit 50 --offset 0
+
+# Check signatures against new build; auto-suggest replacements for broken ones
 patchlens sigs old.exe new.exe --signatures sigs.toml --suggest --sarif broken.sarif
 
-# Explain a specific function change
+# Explain a specific function change (hex address or name)
 patchlens explain old.exe new.exe --function 0x140001000 --limit 200
 
-# Export offsets for modders
+# Export offsets for modders (C header, Cheat Engine .CT, JSON, SARIF)
 patchlens export old.exe new.exe --signatures sigs.toml --format header --out offsets.h
 ```
 
@@ -124,7 +91,7 @@ patchlens export old.exe new.exe --signatures sigs.toml --format header --out of
 
 ---
 
-## Signature Format (TOML)
+## 📝 Signature Format (TOML)
 
 ```toml
 [[signatures]]
@@ -153,7 +120,7 @@ description = "Wildcard version for migration"
 
 ---
 
-## MCP Integration (Claude Desktop)
+## 🔌 MCP Integration (Claude Desktop)
 
 Add to `claude_desktop_config.json`:
 
@@ -169,19 +136,59 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-### Available MCP Tools
+> **Windows:** If installed via cargo, `patchlens-mcp` should be on PATH. Otherwise use full path: `C:\\path\\to\\patchlens-mcp.exe`.
 
-| Tool | Description | Example |
-|------|-------------|---------|
-| `diff_builds` | Diff two builds | `{"old_path": "old.exe", "new_path": "new.exe", "min_score": 0.8}` |
-| `check_signatures` | Verify signatures | `{"old_path": "old.exe", "new_path": "new.exe", "signatures": [...], "suggest": true}` |
-| `explain_change` | Explain function diff | `{"old_path": "old.exe", "new_path": "new.exe", "function": "0x140001000"}` |
-| `export_offsets` | Export offsets | `{"old_path": "old.exe", "new_path": "new.exe", "signatures": [...], "format": "header"}` |
-| `ci_report` | Generate CI report | `{"old_path": "old.exe", "new_path": "new.exe", "format": "sarif"}` |
+### OpenCode Integration
+
+Add to `opencode.json`:
+
+```json
+{
+  "mcp": {
+    "patchlens": {
+      "type": "local",
+      "command": ["patchlens-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
 
 ---
 
-## CI Integration (GitHub Actions)
+## 🛠 Available MCP Tools
+
+| Tool | Description | Example |
+|------|-------------|---------|
+| `diff_builds` | Diff two PE64 builds; pagination default 50 / max 500 | `{"old_path": "old.exe", "new_path": "new.exe", "min_score": 0.8}` |
+| `check_signatures` | Verify signatures; `suggest: true` auto-migrates broken ones | `{"old_path": "old.exe", "new_path": "new.exe", "signatures": [...], "suggest": true}` |
+| `explain_change` | Explain a function's disassembly diff | `{"old_path": "old.exe", "new_path": "new.exe", "function": "0x140001000"}` |
+| `export_offsets` | Export offsets as header / .CT / JSON / SARIF | `{"old_path": "old.exe", "new_path": "new.exe", "format": "header"}` |
+| `ci_report` | Generate CI report (SARIF 2.1.0 or JSON) | `{"old_path": "old.exe", "new_path": "new.exe", "format": "sarif"}` |
+
+---
+
+## 📖 Example Workflow
+
+> **Goal:** "My AOB signature broke after the game updated. Find the new function address and generate a replacement signature."
+
+```bash
+# 1. Diff the two builds
+patchlens diff game_v1.exe game_v2.exe --format json --out diff.json
+
+# 2. Check which signatures broke
+patchlens sigs game_v1.exe game_v2.exe --signatures sigs.toml --suggest --sarif report.sarif
+
+# 3. Inspect the changed function in detail
+patchlens explain game_v1.exe game_v2.exe --function sub_140003A20 --limit 200
+
+# 4. Export the new offset for your mod
+patchlens export game_v1.exe game_v2.exe --signatures sigs.toml --format header --out offsets.h
+```
+
+---
+
+## 🔄 CI Integration (GitHub Actions)
 
 ```yaml
 - name: Check signatures
@@ -206,7 +213,7 @@ The SARIF report includes:
 
 ---
 
-## Output Formats
+## 📊 Output Formats
 
 | Format | Use Case |
 |--------|----------|
@@ -217,93 +224,71 @@ The SARIF report includes:
 
 ---
 
-## Performance
+## 🖥 Platform Support
 
-| Binary Size | Functions | Time (12-core) | Memory | Notlar |
-|-------------|-----------|----------------|--------|--------|
-| ~1 KB | 2 | ~70 µs | <10 MB | Sentetik test fixture (ölçülmüş) |
-| 10 MB | ~2,000 | ~2s (est.) | ~150 MB | Tahmin; gerçek yükle ölçülmeli |
-| 100 MB | ~20,000 | ~15s (est.) | ~500 MB | Tahmin; gerçek yükle ölçülmeli |
-| 300 MB | ~60,000 | ~45s (est.) | ~1.2 GB | Tahmin; gerçek yükle ölçülmeli |
+| Platform | PE64 (x64) | CLI | MCP | Notes |
+|----------|------------|-----|-----|-------|
+| Linux    | ✅ Full    | ✅  | ✅  | Tested in CI |
+| Windows  | ✅ Full    | ✅  | ✅  | Tested in CI (windows-latest) |
+| macOS    | ✅ Full    | ✅  | ✅  | Rust toolchain required |
 
-*Uses `mmap` + `rayon` for parallel processing; memory scales with section data, not full file. "(est.)" işaretli satırlar daha büyük PE dosyaları için estimated değerlerdir.*
-
----
-
-## Architecture
-
-```
-patchlens/
-├── crates/
-│   ├── patchlens-core/     # Binary loading, function extraction, diffing, signatures
-│   ├── patchlens-cli/      # CLI entry point (clap)
-│   ├── patchlens-mcp/      # MCP server (rmcp, stdio)
-│   └── patchlens-report/   # SARIF, JSON, C header, .CT export
-├── tests/fixtures/         # Synthetic PE test files
-├── tools/make_fixtures/    # Fixture generator
-└── benches/                # Criterion benchmarks
-```
+Patchlens analyzes **PE32+ (x64)** files on any platform. PE32 (x86) is intentionally rejected with an actionable error: `"Dosya PE değil. Desteklenen: PE x64"`.
 
 ---
 
-## Safety & Ethics
+## 📈 Benchmarks
 
-- **Static analysis only** — binaries are never executed
-- **Read-only access** — files opened read-only via `mmap`
-- **Path traversal blocked** — paths normalized, only user-provided files accessed
-- **No anti-cheat/DRM bypass** — designed for single-player modding, security research, and owned binaries only
-- **Fuzz tested** — `cargo-fuzz` targets for PE parsing
+Measured with `cargo run --example bench_quick -p patchlens-core` on the synthetic fixture (~1 KB, 2 functions):
 
-> **Legal**: Only use on binaries you own or have explicit permission to analyze. Check your local laws and the software's EULA.
-
----
-
-## Development
-
-```bash
-# Setup
-cargo build --workspace
-cargo test --workspace
-cargo run --bin make_fixtures  # Generate test fixtures
-
-# Benchmarks
-cargo bench --workspace
-
-# Linting
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-```
-
-### Release
-
-```bash
-git tag -a v0.1.0 -m "patchlens v0.1.0"
-git push origin v0.1.0
-# GitHub Actions creates release with binaries
-```
-
----
-
-## Benchmarks
-
-Run locally:
-
-```bash
-cargo bench --workspace
-```
-
-| Operation | Time (synthetic ~1 KB fixture) |
-|-----------|-------------------------------|
-| Analyze (load + PE parse + extract) | ~0.07 ms (old), ~0.07 ms (new) |
+| Operation | Time |
+|-----------|------|
+| Analyze (load + PE parse + extract) | ~0.07 ms per file |
 | Diff (staged, 2 functions) | ~61 µs |
 | Signature check (default set) | ~724 µs |
 | Suggestion generation (1 broken sig) | ~92 µs |
 
-*Ölçümler `cargo run --example bench_quick -p patchlens-core` ile alındı. Gerçek 10 MB+ PE dosyaları için süreler daha uzun olacaktır.*
+Estimates for larger real-world PE files:
+| Binary Size | Functions | Time (est.) | Memory |
+|-------------|-----------|-------------|--------|
+| 10 MB | ~2,000 | ~2s | ~150 MB |
+| 100 MB | ~20,000 | ~15s | ~500 MB |
+| 300 MB | ~60,000 | ~45s | ~1.2 GB |
+
+*Uses `mmap` + `rayon` for parallel processing; memory scales with section data, not full file. "(est.)" marks estimated values for larger files.*
 
 ---
 
-## Related Projects
+## 🛡 Safety & Ethics
+
+This tool is designed for **single-player modding, security research, and owned binaries only**. The following principles are enforced by design:
+
+- **Static analysis only** — Binaries are **never executed**.
+- **Read-only access** — Files are opened read-only via `mmap`; originals are never modified.
+- **Path traversal blocked** — Paths are normalized; only user-provided files are accessed.
+- **No anti-cheat/DRM bypass** — Designed for single-player modding, security research, and owned binaries only.
+- **Fuzz tested** — Random-byte no-panic test runs in normal `cargo test`; `cargo-fuzz` targets for PE parsing.
+
+> **Legal:** Only use on binaries you own or have explicit permission to analyze. Check your local laws and the software's EULA.
+
+---
+
+## 🏗 Architecture
+
+```
+patchlens/
+├── crates/
+│   ├── patchlens-core/     # Binary loading, function extraction, diffing, signatures, reports, cache
+│   ├── patchlens-cli/      # CLI entry point (clap): diff / sigs / explain / export
+│   ├── patchlens-mcp/      # MCP server (rmcp, stdio): 5 tools
+│   └── patchlens-report/   # Thin re-export wrapper over core report module
+├── tools/make_fixtures/    # Synthetic PE64 fixture generator (lib + bin)
+├── .github/workflows/ci.yml # CI: fmt --check, clippy -D warnings, build, test (ubuntu + windows)
+└── README.md
+```
+
+---
+
+## 📚 Related Projects
 
 | Project | Description |
 |---------|-------------|
@@ -314,23 +299,23 @@ cargo bench --workspace
 
 ---
 
-## License
+## 📄 License
 
 MIT — see [LICENSE](LICENSE). Free for personal and commercial use.
 
 ---
 
-## Contributing
+## 🤝 Contributing
 
 1. Fork the repo
 2. Create a feature branch
 3. Add tests for new functionality
-4. Ensure `cargo test`, `cargo fmt`, `cargo clippy` pass
+4. Ensure `cargo test`, `cargo fmt --check`, `cargo clippy -- -D warnings` pass
 5. Open a PR
 
 ---
 
-## Links
+## 🔗 Links
 
 - **Repository**: https://github.com/RivaExits0/patchlens
 - **Issues**: https://github.com/RivaExits0/patchlens/issues
