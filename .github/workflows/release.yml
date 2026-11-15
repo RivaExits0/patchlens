@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin_suffix: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin_suffix: ".exe"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build release binaries
+        run: |
+          cargo build --release --target ${{ matrix.target }} -p patchlens-cli -p patchlens-mcp
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/patchlens${{ matrix.bin_suffix }} dist/patchlens-${{ matrix.target }}${{ matrix.bin_suffix }}
+          cp target/${{ matrix.target }}/release/patchlens-mcp${{ matrix.bin_suffix }} dist/patchlens-mcp-${{ matrix.target }}${{ matrix.bin_suffix }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: patchlens-${{ matrix.target }}
+          path: dist/*
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

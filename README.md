@@ -58,7 +58,6 @@ cargo run --bin make_fixtures   # generate synthetic PE64 test fixtures
 ### 2. External Dependencies (Optional)
 | Tool | Purpose |
 |------|---------|
-| `gdb` | Not used (static analysis only) |
 | `clang`/`MSVC` | Only for building test fixtures |
 
 ---
@@ -238,23 +237,24 @@ Patchlens analyzes **PE32+ (x64)** files on any platform. PE32 (x86) is intentio
 
 ## 📈 Benchmarks
 
-Measured locally on the synthetic fixture (~1 KB, 2 functions) with `--release` timings from a temporary benchmark harness:
+Measured with `cargo bench -p patchlens-core` on the synthetic fixture (~1 KB, 2 functions):
 
 | Operation | Time |
 |-----------|------|
-| Analyze (load + PE parse + extract) | ~0.07 ms per file |
-| Diff (staged, 2 functions) | ~61 µs |
-| Signature check (default set) | ~724 µs |
-| Suggestion generation (1 broken sig) | ~92 µs |
+| Analyze (load + PE parse + extract) | see `cargo bench` output |
+| Diff (staged, 2 functions) | see `cargo bench` output |
+| Signature check (default set) | see `cargo bench` output |
+| Suggestion generation (1 broken sig) | see `cargo bench` output |
 
-Estimates for larger real-world PE files:
-| Binary Size | Functions | Time (est.) | Memory |
-|-------------|-----------|-------------|--------|
-| 10 MB | ~2,000 | ~2s | ~150 MB |
-| 100 MB | ~20,000 | ~15s | ~500 MB |
-| 300 MB | ~60,000 | ~45s | ~1.2 GB |
+*Measured on fixtures only; real-world numbers coming.*
 
-*Uses `mmap` + `rayon` for parallel processing; memory scales with section data, not full file. "(est.)" marks estimated values for larger files.*
+---
+
+## 🎬 Demo
+
+<!-- GIF goes here -->
+
+See `docs/demo-script.md` for a step-by-step walkthrough: a signature breaks, `--suggest` finds the new one, and verification passes.
 
 ---
 
@@ -272,6 +272,33 @@ This tool is designed for **single-player modding, security research, and owned 
 
 ---
 
+## 🔍 Fuzzing
+
+Fuzz the PE parser with cargo-fuzz (nightly toolchain):
+
+```sh
+cargo +nightly fuzz run fuzz_pe_parse
+```
+
+The fuzz target lives in `fuzz/fuzz_targets/fuzz_pe_parse.rs` and feeds arbitrary bytes to `Binary::from_bytes`. CI does not run it; run it locally.
+
+## 🧪 Testing
+
+Run the full suite:
+
+```sh
+cargo test --workspace --all-targets
+```
+
+Real-binary smoke test (ignored by default). Set `PATCHLENS_OLD` and `PATCHLENS_NEW` to two real PE64 executables:
+
+```sh
+PATCHLENS_OLD=/path/to/old.exe PATCHLENS_NEW=/path/to/new.exe \
+  cargo test --package patchlens-core --test integration_test real_pe_diff -- --ignored
+```
+
+---
+
 ## 🏗 Architecture
 
 ```
@@ -280,7 +307,6 @@ patchlens/
 │   ├── patchlens-core/     # Binary loading, function extraction, diffing, signatures, reports, cache
 │   ├── patchlens-cli/      # CLI entry point (clap): diff / sigs / explain / export
 │   ├── patchlens-mcp/      # MCP server (rmcp, stdio): 5 tools
-│   └── patchlens-report/   # Thin re-export wrapper over core report module
 ├── tools/make_fixtures/    # Synthetic PE64 fixture generator (lib + bin)
 ├── .github/workflows/ci.yml # CI: fmt --check, clippy -D warnings, build, test (ubuntu + windows)
 └── README.md

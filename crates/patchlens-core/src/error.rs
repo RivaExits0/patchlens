@@ -1,24 +1,24 @@
-//! Patchlens hata tipleri.
+//! Patchlens error types.
 
 use thiserror::Error;
 
-/// Patchlens'in döndürdüğü tipize edilmiş hatalar.
+/// Typed errors returned by Patchlens.
 #[derive(Debug, Error)]
 pub enum PatchlensError {
-    /// Dosya PE değil veya PE32 (x86).
-    #[error("Dosya PE değil. Desteklenen: PE x64")]
+    /// The file is not a PE32+ (x64) binary.
+    #[error("Not a PE file. Supported: PE x64")]
     NotPe64,
 
-    /// Desteklenmeyen mimari.
-    #[error("Desteklenmeyen mimari: {0}. Desteklenen: PE x64")]
+    /// Unsupported architecture.
+    #[error("Unsupported architecture: {0}. Supported: PE x64")]
     UnsupportedArchitecture(String),
 
-    /// Binary içinde aranan isim bulunamadı.
-    #[error("Fonksiyon bulunamadı: {0}")]
+    /// The requested function was not found.
+    #[error("Function not found: {0}")]
     FunctionNotFound(String),
 
-    /// Dosya okunamadı.
-    #[error("Dosya okunamadı: {0}")]
+    /// The file could not be read.
+    #[error("Could not read file: {0}")]
     Io(String),
 }
 

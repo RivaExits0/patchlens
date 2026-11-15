@@ -1,0 +1,16 @@
+[package]
+name = "patchlens-fuzz"
+version = "0.1.0"
+publish = false
+edition = "2021"
+
+[dependencies]
+libfuzzer-sys = "0.4"
+patchlens-core = { path = "../crates/patchlens-core" }
+
+[[bin]]
+name = "fuzz_pe_parse"
+path = "fuzz_targets/fuzz_pe_parse.rs"
+test = false
+doc = false
+bench = false
