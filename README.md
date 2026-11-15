@@ -248,6 +248,25 @@ Measured with `cargo bench -p patchlens-core` on the synthetic fixture (~1 KB, 2
 
 *Measured on fixtures only; real-world numbers coming.*
 
+### Real-world measurement (jq, Windows x64)
+
+Compared `jq 1.6` (`jq-win64.exe`, 3.4 MB) against `jq 1.7.1`
+(`jq-windows-amd64.exe`, 0.94 MB) with `patchlens diff ... --format json`:
+
+| Metric | Value |
+|--------|-------|
+| Old functions | 1023 |
+| New functions | 1327 |
+| Unchanged | 0 |
+| Modified | 1 |
+| Removed | 1022 |
+| Added | 1326 |
+| Wall-clock time (debug build) | 5 min 21 s |
+
+The two releases share almost no matching functions, which is expected for
+a major version jump (different compiler/optimisation settings). This is a
+stress test of the parser and differ, not a like-for-like rebuild.
+
 ---
 
 ## 🎬 Demo
