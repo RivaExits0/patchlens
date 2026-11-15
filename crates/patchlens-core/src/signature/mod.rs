@@ -159,11 +159,14 @@ impl SignatureEngine {
             return results;
         }
 
-        let suggestions = self.suggest(old_binary, new_binary, &broken);
+        // Öneriler kırık imza listesiyle birebir hizalıdır; üretilemeyen
+        // imzalar `None` olur. Böylece bir sonraki imzanın önerisi yanlış
+        // sonuca atanmaz.
+        let suggestions = self.suggest_aligned(old_binary, new_binary, &broken);
         let mut iter = suggestions.into_iter();
         for result in results.iter_mut() {
             if result.status == SignatureStatus::Broken {
-                result.suggested_signature = iter.next();
+                result.suggested_signature = iter.next().flatten();
             }
         }
         results
@@ -218,9 +221,12 @@ impl SignatureEngine {
             let offset = search_start + found;
             if needle.matches_at(data, offset) {
                 let va = binary.va_from_offset(offset);
-                let function = va.and_then(|va| binary.function_by_va(va));
-                let rva = binary
-                    .va_from_offset(offset)
+                let function = va.and_then(|va| {
+                    binary
+                        .function_by_va(va)
+                        .or_else(|| containing_function(binary, va))
+                });
+                let rva = va
                     .map(|va| va.saturating_sub(binary.info().image_base))
                     .unwrap_or(offset as u64);
                 matches.push(SignatureMatch {
@@ -264,7 +270,22 @@ impl SignatureEngine {
         new_binary: &Binary,
         broken_signatures: &[Signature],
     ) -> Vec<Signature> {
-        let diff = diff_binaries(old_binary, new_binary, DiffConfig::default());
+        self.suggest_aligned(old_binary, new_binary, broken_signatures)
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    /// Kırık imza listesiyle birebir hizalı öneriler üretir.
+    fn suggest_aligned(
+        &self,
+        old_binary: &Binary,
+        new_binary: &Binary,
+        broken_signatures: &[Signature],
+    ) -> Vec<Option<Signature>> {
+        // Sayfalama, eşleştirme haritasını 100 fonksiyonda kesmemeli;
+        // büyük binary'lerde kırık imza önerisi aksi halde kaybolur.
+        let diff = diff_binaries(old_binary, new_binary, DiffConfig::unpaginated());
 
         let mut old_to_new: HashMap<u64, u64> = HashMap::new();
         for m in diff.unchanged.iter().chain(diff.modified.iter()) {
@@ -273,13 +294,10 @@ impl SignatureEngine {
             }
         }
 
-        let mut suggestions = Vec::new();
-        for sig in broken_signatures {
-            if let Some(suggestion) = self.suggest_one(old_binary, new_binary, sig, &old_to_new) {
-                suggestions.push(suggestion);
-            }
-        }
-        suggestions
+        broken_signatures
+            .iter()
+            .map(|sig| self.suggest_one(old_binary, new_binary, sig, &old_to_new))
+            .collect()
     }
 
     /// Tek bir kırık imza için öneri üretir.

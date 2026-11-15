@@ -10,9 +10,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use patchlens_core::{
-    Binary, DiffConfig, Patchlens, Signature, SignatureKind, SignatureSet, SignatureStatus,
-};
+use patchlens_core::{Binary, DiffConfig, Patchlens, Signature, SignatureSet, SignatureStatus};
 use patchlens_report::{ci_report::CiReport, explain_change, export_offsets, ExportFormat};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -231,7 +229,11 @@ async fn run() -> Result<u8> {
             info!("Yeni binary yükleniyor: {}", new.display());
             let new_bin = patchlens.analyze_binary(&new).await?;
 
-            let results = patchlens.check_signatures_with_suggestions(&old_bin, &new_bin, &sig_set);
+            let results = if suggest {
+                patchlens.check_signatures_with_suggestions(&old_bin, &new_bin, &sig_set)
+            } else {
+                patchlens.check_signatures(&new_bin, &sig_set)
+            };
 
             if suggest {
                 let suggestions: Vec<Signature> = results
@@ -243,28 +245,28 @@ async fn run() -> Result<u8> {
                 }
             }
 
-            let output = match format {
-                OutputFormat::Json => serde_json::to_string_pretty(&results)?,
-                OutputFormat::Sarif => CiReport::generate(
-                    &patchlens.diff(&old_bin, &new_bin, DiffConfig::default()),
+            // SARIF hem `--format sarif` hem `--sarif FILE` için bir kez üretilir.
+            let sarif_output = if format == OutputFormat::Sarif || sarif.is_some() {
+                Some(CiReport::generate(
+                    &patchlens.diff(&old_bin, &new_bin, DiffConfig::unpaginated()),
                     &old_bin,
                     &new_bin,
                     Some(&sig_set),
                     ExportFormat::Sarif,
-                )?,
+                )?)
+            } else {
+                None
+            };
+
+            let output = match format {
+                OutputFormat::Json => serde_json::to_string_pretty(&results)?,
+                OutputFormat::Sarif => sarif_output.clone().unwrap_or_default(),
                 OutputFormat::Text => format_text_sig_results(&results),
             };
             println!("{output}");
 
-            if let Some(sarif_path) = sarif {
-                let sarif_output = CiReport::generate(
-                    &patchlens.diff(&old_bin, &new_bin, DiffConfig::default()),
-                    &old_bin,
-                    &new_bin,
-                    Some(&sig_set),
-                    ExportFormat::Sarif,
-                )?;
-                std::fs::write(&sarif_path, sarif_output)
+            if let (Some(sarif_path), Some(sarif_report)) = (sarif, sarif_output) {
+                std::fs::write(&sarif_path, sarif_report)
                     .with_context(|| format!("SARIF yazılamadı: {}", sarif_path.display()))?;
                 info!("SARIF raporu yazıldı: {}", sarif_path.display());
             }
@@ -360,10 +362,11 @@ fn format_text_diff(diff: &patchlens_core::DiffResult) -> String {
     out.push_str("=== Patchlens Diff ===\n");
     out.push_str(&format!("Eski toplam: {} fonksiyon\n", diff.old_total));
     out.push_str(&format!("Yeni toplam: {} fonksiyon\n", diff.new_total));
-    out.push_str(&format!("Değişmeyen: {}\n", diff.unchanged.len()));
-    out.push_str(&format!("Değişen: {}\n", diff.modified.len()));
-    out.push_str(&format!("Eklenen: {}\n", diff.added.len()));
-    out.push_str(&format!("Kaldırılan: {}\n", diff.removed.len()));
+    // Sayfalama kullanılsa bile gerçek toplamlar gösterilir.
+    out.push_str(&format!("Değişmeyen: {}\n", diff.totals.unchanged));
+    out.push_str(&format!("Değişen: {}\n", diff.totals.modified));
+    out.push_str(&format!("Eklenen: {}\n", diff.totals.added));
+    out.push_str(&format!("Kaldırılan: {}\n", diff.totals.removed));
     out.push('\n');
 
     for m in &diff.modified {
@@ -429,10 +432,4 @@ fn format_text_sig_results(results: &[patchlens_core::SignatureCheckResult]) -> 
         }
     }
     out
-}
-
-// Kullanılmayan importları önlemek için tip referansı.
-#[allow(dead_code)]
-fn _signature_types(sig: &Signature) -> (SignatureKind, Option<u64>) {
-    (sig.kind, sig.expected_offset)
 }

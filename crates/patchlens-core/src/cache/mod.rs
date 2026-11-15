@@ -88,10 +88,15 @@ impl AnalysisCache {
     /// Kapasite aşılıyorsa bir girdiyi çıkarır.
     fn evict_if_needed(&self) {
         while self.inner.len() > self.max_entries {
-            let Some(entry) = self.inner.iter().next() else {
-                break;
+            // DashMap read guard'ı tutarken aynı shard'a yazmak kilitlenmeye
+            // yol açabilir; anahtarı kopyalayıp guard'ı bıraktıktan sonra sil.
+            let key = {
+                let Some(entry) = self.inner.iter().next() else {
+                    break;
+                };
+                entry.key().clone()
             };
-            self.inner.remove(entry.key());
+            self.inner.remove(&key);
         }
     }
 

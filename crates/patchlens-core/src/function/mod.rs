@@ -62,7 +62,7 @@ impl FunctionFingerprinter {
                 let op_str = insn.op_str().unwrap_or("").to_string();
                 let bytes = insn.bytes().to_vec();
                 let size = bytes.len();
-                let end_address = insn.address() + size as u64;
+                let end_address = insn.address().saturating_add(size as u64);
 
                 out.push(InstructionInfo {
                     address: insn.address(),
@@ -158,6 +158,17 @@ pub fn normalize_operands(op_str: &str) -> String {
             continue;
         }
         if c.is_ascii_digit() {
+            // `r8`, `r9`, `xmm0` gibi register adlarının sonundaki rakamlar
+            // kimliğin parçasıdır; immediate gibi maskelenmemelidir.
+            let previous_is_identifier = i > 0 && {
+                let previous = bytes[i - 1];
+                previous.is_ascii_alphanumeric() || previous == '_'
+            };
+            if previous_is_identifier {
+                result.push(c);
+                i += 1;
+                continue;
+            }
             result.push_str("IMM");
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
@@ -350,8 +361,8 @@ fn scan_prologues(data: &[u8], sections: &[SectionInfo]) -> Vec<u32> {
                     || (bytes[0] == 0x55 && bytes[1] == 0x8B && bytes[2] == 0xEC)
                     || (bytes[0] == 0x40 && bytes[1] == 0x55);
             if is_prologue {
-                let rva = section.virtual_address as u32 + offset as u32;
-                starts.push(rva);
+                let rva = (section.virtual_address as usize).saturating_add(offset);
+                starts.push(u32::try_from(rva).unwrap_or(u32::MAX));
             }
         }
     }
@@ -381,11 +392,21 @@ fn extract_function_at(
     })?;
 
     let offset_in_section = start.rva.checked_sub(section.virtual_address as u32)? as usize;
+    // Yalnızca dosyada gerçekten bulunan (ham) bölüm verisi okunabilir.
+    // Sanal padding'in dosya offsetine eşlenmesi yanlış bölüm verisi okur.
+    let raw_size = usize::try_from(section.raw_size).ok()?;
+    if offset_in_section >= raw_size {
+        return None;
+    }
     let section_file_start = usize::try_from(section.raw_offset).ok()?;
     let file_start = section_file_start.checked_add(offset_in_section)?;
 
-    let section_end_rva =
-        (section.virtual_address + section.virtual_size.max(section.raw_size)) as u32;
+    let section_end_rva = u32::try_from(
+        section
+            .virtual_address
+            .saturating_add(section.virtual_size.max(section.raw_size)),
+    )
+    .unwrap_or(u32::MAX);
     let limit_rva = limit_rva.min(section_end_rva);
     let limit_offset = (limit_rva.saturating_sub(section.virtual_address as u32)) as usize;
     let max_len = limit_offset
@@ -457,7 +478,7 @@ fn collect_string_refs(
         }
         let Some(section) = sections.iter().find(|s| {
             let sec_start = s.virtual_address;
-            let sec_end = sec_start + s.virtual_size.max(s.raw_size);
+            let sec_end = sec_start.saturating_add(s.virtual_size.max(s.raw_size));
             let rva = target - image_base;
             rva >= sec_start && rva < sec_end
         }) else {
@@ -482,12 +503,15 @@ fn collect_string_refs(
 pub fn va_to_file_offset(va: u64, image_base: u64, sections: &[SectionInfo]) -> Option<usize> {
     let rva = va.checked_sub(image_base)?;
     for section in sections {
-        let sec_start = section.virtual_address;
-        let sec_size = section.virtual_size.max(section.raw_size);
-        if rva >= sec_start && rva < sec_start + sec_size {
-            let offset = section.raw_offset.checked_add(rva - sec_start)?;
-            return usize::try_from(offset).ok();
+        let Some(delta) = rva.checked_sub(section.virtual_address) else {
+            continue;
+        };
+        // Yalnızca ham (dosyada mevcut) veri eşlenir; sanal padding atlanır.
+        if delta >= section.raw_size {
+            continue;
         }
+        let offset = section.raw_offset.checked_add(delta)?;
+        return usize::try_from(offset).ok();
     }
     None
 }

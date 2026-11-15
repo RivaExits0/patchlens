@@ -2,8 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
+use patchlens_core::function::normalize_operands;
 use patchlens_core::{
-    DiffConfig, Patchlens, Signature, SignatureKind, SignatureSet, SignatureStatus,
+    ChangeType, DiffConfig, Patchlens, SectionInfo, Signature, SignatureKind, SignatureSet,
+    SignatureStatus,
 };
 
 /// Fixture dosyalarını geçici dizine yazar.
@@ -338,4 +340,217 @@ async fn empty_section_binary_is_handled() {
     assert_eq!(diff.added.len(), 0);
     assert_eq!(diff.removed.len(), 0);
     assert_eq!(diff.totals.unchanged, bin.functions().len());
+}
+
+#[test]
+fn operand_normalization_preserves_register_names() {
+    // r8/r9 gibi register adlarındaki rakamlar immediate değildir.
+    assert_eq!(normalize_operands("r8, 0x10"), "r8, IMM");
+    assert_eq!(normalize_operands("r9, 0x10"), "r9, IMM");
+    assert_ne!(normalize_operands("r8, rax"), normalize_operands("r9, rax"));
+    assert_eq!(normalize_operands("eax, 30"), "eax, IMM");
+}
+
+#[test]
+fn virtual_padding_is_not_mapped_to_file() {
+    let sections = vec![SectionInfo {
+        name: ".data".to_string(),
+        virtual_address: 0x2000,
+        virtual_size: 0x1000,
+        raw_offset: 0x400,
+        raw_size: 0x100,
+        characteristics: 0,
+        entropy: 0.0,
+    }];
+    let image_base = 0x1400_0000;
+
+    assert_eq!(
+        patchlens_core::function::va_to_file_offset(image_base + 0x2010, image_base, &sections),
+        Some(0x410)
+    );
+    // Sanal padding (raw_size dışı) dosyada yok; başka veri okunmamalı.
+    assert_eq!(
+        patchlens_core::function::va_to_file_offset(image_base + 0x2100, image_base, &sections),
+        None
+    );
+}
+
+#[tokio::test]
+async fn identical_function_explain_has_no_changes() {
+    let dir = fixtures();
+    let (old_path, _) = fixture_paths(dir.path());
+    let patchlens = Patchlens::new();
+    let bin = patchlens.analyze_binary(&old_path).await.unwrap();
+    let target = bin
+        .functions()
+        .iter()
+        .find(|f| f.address == bin.info().image_base + 0x1000)
+        .expect("func_add bulunamadı");
+
+    let explanation = patchlens
+        .explain_change(&bin, &bin, target.address, 100, 0)
+        .unwrap();
+
+    assert!(explanation.instruction_changes.is_empty());
+    assert!(explanation
+        .disassembly_diff
+        .iter()
+        .all(|line| line.change_type == ChangeType::Unchanged));
+    assert!(explanation
+        .basic_block_changes
+        .iter()
+        .all(|block| block.change_type == ChangeType::Unchanged));
+}
+
+#[tokio::test]
+async fn immediate_patch_is_marked_as_modified() {
+    let dir = fixtures();
+    let (old_path, new_path) = fixture_paths(dir.path());
+    let patchlens = Patchlens::new();
+    let old_bin = patchlens.analyze_binary(&old_path).await.unwrap();
+    let new_bin = patchlens.analyze_binary(&new_path).await.unwrap();
+    let target = old_bin
+        .functions()
+        .iter()
+        .find(|f| f.address == old_bin.info().image_base + 0x1000)
+        .expect("func_add bulunamadı");
+
+    let explanation = patchlens
+        .explain_change(&old_bin, &new_bin, target.address, 100, 0)
+        .unwrap();
+
+    assert!(explanation
+        .disassembly_diff
+        .iter()
+        .any(|line| line.change_type == ChangeType::Modified));
+    assert!(explanation
+        .instruction_changes
+        .iter()
+        .any(|change| change.change_type == ChangeType::Modified));
+    assert!(explanation
+        .basic_block_changes
+        .iter()
+        .any(|block| block.change_type == ChangeType::Modified));
+}
+
+#[tokio::test]
+async fn unknown_function_explain_returns_error() {
+    let dir = fixtures();
+    let (old_path, new_path) = fixture_paths(dir.path());
+    let patchlens = Patchlens::new();
+    let old_bin = patchlens.analyze_binary(&old_path).await.unwrap();
+    let new_bin = patchlens.analyze_binary(&new_path).await.unwrap();
+
+    let error = patchlens
+        .explain_change(&old_bin, &new_bin, 0xDEAD_BEEF, 100, 0)
+        .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("Fonksiyon bulunamadı"),
+        "beklenen hata: {error:#}"
+    );
+}
+
+#[tokio::test]
+async fn suggestions_are_aligned_with_broken_signatures() {
+    let dir = fixtures();
+    let (old_path, new_path) = fixture_paths(dir.path());
+    let patchlens = Patchlens::new();
+    let old_bin = patchlens.analyze_binary(&old_path).await.unwrap();
+    let new_bin = patchlens.analyze_binary(&new_path).await.unwrap();
+
+    // İlk imza için öneri üretilemez (export yok), ikinci için üretilebilir.
+    // Öneriler hizalanmazsa ikinci imzanın önerisi birinciye atanır.
+    let signatures = SignatureSet {
+        signatures: vec![
+            Signature {
+                name: "missing_export".to_string(),
+                kind: SignatureKind::ExportName,
+                function_name: Some("NoSuchExport".to_string()),
+                ..Default::default()
+            },
+            Signature {
+                name: "func_add_old".to_string(),
+                kind: SignatureKind::Aob,
+                pattern: Some("55 48 89 E5 B8 1E 00 00 00".to_string()),
+                expected_offset: Some(0x1000),
+                ..Default::default()
+            },
+        ],
+    };
+
+    let results = patchlens.check_signatures_with_suggestions(&old_bin, &new_bin, &signatures);
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].status, SignatureStatus::Broken);
+    assert_eq!(results[1].status, SignatureStatus::Broken);
+    assert!(results[0].suggested_signature.is_none());
+    assert!(results[1].suggested_signature.is_some());
+}
+
+#[tokio::test]
+async fn suggestion_mapping_is_not_truncated_by_pagination() {
+    const COUNT: usize = 130;
+    const TARGET_INDEX: usize = 120;
+
+    let dir = tempfile::tempdir().unwrap();
+    let old_path = dir.path().join("old.exe");
+    let new_path = dir.path().join("new.exe");
+    std::fs::write(
+        &old_path,
+        make_fixtures::build_many_functions_pe(COUNT, false).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        &new_path,
+        make_fixtures::build_many_functions_pe(COUNT, true).unwrap(),
+    )
+    .unwrap();
+
+    let patchlens = Patchlens::new();
+    let old_bin = patchlens.analyze_binary(&old_path).await.unwrap();
+    let new_bin = patchlens.analyze_binary(&new_path).await.unwrap();
+    assert_eq!(old_bin.functions().len(), COUNT);
+
+    let target_rva = 0x1000 + TARGET_INDEX as u64 * 0x10;
+    let target = old_bin
+        .functions()
+        .iter()
+        .find(|f| f.address == old_bin.info().image_base + target_rva)
+        .expect("hedef fonksiyon bulunamadı");
+    let pattern = target
+        .bytes
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let signature = Signature {
+        name: "many_target".to_string(),
+        kind: SignatureKind::Aob,
+        pattern: Some(pattern),
+        expected_offset: Some(target_rva),
+        ..Default::default()
+    };
+
+    let checks = patchlens.check_signatures(
+        &new_bin,
+        &SignatureSet {
+            signatures: vec![signature.clone()],
+        },
+    );
+    assert_eq!(checks[0].status, SignatureStatus::Broken);
+
+    let suggestions = patchlens.suggest_signatures(&old_bin, &new_bin, &[signature]);
+    assert_eq!(
+        suggestions.len(),
+        1,
+        "sayfalama nedeniyle öneri kayboldu (eşleştirme haritası 100'de kesilmiş olabilir)"
+    );
+    assert_eq!(suggestions[0].expected_offset, Some(target_rva));
+
+    let verification = patchlens.check_signatures(
+        &new_bin,
+        &SignatureSet {
+            signatures: suggestions,
+        },
+    );
+    assert_eq!(verification[0].status, SignatureStatus::Ok);
 }

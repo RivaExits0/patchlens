@@ -112,7 +112,8 @@ impl Patchlens {
         signatures: Option<&SignatureSet>,
         format: ExportFormat,
     ) -> anyhow::Result<String> {
-        let diff = self.diff(old_binary, new_binary, DiffConfig::default());
+        // Rapor, sayfalanmış listeler değil tam diff içermelidir.
+        let diff = self.diff(old_binary, new_binary, DiffConfig::unpaginated());
         CiReport::generate(&diff, old_binary, new_binary, signatures, format)
     }
 

@@ -357,13 +357,17 @@ fn string_import_phase(
     matches: &mut Vec<FunctionMatch>,
     min_score: f64,
 ) {
-    let mut buckets: HashMap<u64, Vec<usize>> = HashMap::new();
+    let mut string_buckets: HashMap<u64, Vec<usize>> = HashMap::new();
+    let mut import_buckets: HashMap<&str, Vec<usize>> = HashMap::new();
     for (idx, func) in old_functions.iter().enumerate() {
         if old_matched[idx] {
             continue;
         }
         for &hash in &func.string_refs {
-            buckets.entry(hash).or_default().push(idx);
+            string_buckets.entry(hash).or_default().push(idx);
+        }
+        for import in &func.import_calls {
+            import_buckets.entry(import.as_str()).or_default().push(idx);
         }
     }
 
@@ -373,7 +377,12 @@ fn string_import_phase(
         }
         let mut candidates: Vec<usize> = Vec::new();
         for &hash in &new_func.string_refs {
-            if let Some(list) = buckets.get(&hash) {
+            if let Some(list) = string_buckets.get(&hash) {
+                candidates.extend(list.iter().copied());
+            }
+        }
+        for import in &new_func.import_calls {
+            if let Some(list) = import_buckets.get(import.as_str()) {
                 candidates.extend(list.iter().copied());
             }
         }

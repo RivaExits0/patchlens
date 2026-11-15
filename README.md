@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/RivaExits0/patchlens/actions/workflows/ci.yml/badge.svg)](https://github.com/RivaExits0/patchlens/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Rust 1.75+](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org/)
+[![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-blue.svg)](https://www.rust-lang.org/)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-orange)](https://modelcontextprotocol.io/)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)]()
 
@@ -238,7 +238,7 @@ Patchlens analyzes **PE32+ (x64)** files on any platform. PE32 (x86) is intentio
 
 ## 📈 Benchmarks
 
-Measured with `cargo run --example bench_quick -p patchlens-core` on the synthetic fixture (~1 KB, 2 functions):
+Measured locally on the synthetic fixture (~1 KB, 2 functions) with `--release` timings from a temporary benchmark harness:
 
 | Operation | Time |
 |-----------|------|
@@ -264,9 +264,9 @@ This tool is designed for **single-player modding, security research, and owned 
 
 - **Static analysis only** — Binaries are **never executed**.
 - **Read-only access** — Files are opened read-only via `mmap`; originals are never modified.
-- **Path traversal blocked** — Paths are normalized; only user-provided files are accessed.
+- **No network access** — The CLI and MCP server only read the paths you pass; nothing is uploaded.
+- **Memory-safe parsing** — Bounds-checked PE parsing, no `unwrap()` in library code paths; fuzz-style random-byte tests run in normal `cargo test`.
 - **No anti-cheat/DRM bypass** — Designed for single-player modding, security research, and owned binaries only.
-- **Fuzz tested** — Random-byte no-panic test runs in normal `cargo test`; `cargo-fuzz` targets for PE parsing.
 
 > **Legal:** Only use on binaries you own or have explicit permission to analyze. Check your local laws and the software's EULA.
 

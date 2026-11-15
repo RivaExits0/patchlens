@@ -49,7 +49,7 @@ pub struct ImportInfo {
     pub dll: String,
     /// Import edilen fonksiyon adı.
     pub name: String,
-    /// PE hint değeri.
+    /// PE hint değeri (goblin tarafından dışa aktarılmaz; bilinmiyorsa 0).
     pub hint: u16,
     /// IAT girdisinin sanal adresi.
     pub address: u64,
@@ -270,15 +270,7 @@ impl Binary {
     /// VA'yı dosya offsetine çevirir.
     pub fn va_to_file_offset(&self, va: u64) -> Option<usize> {
         let rva = va.checked_sub(self.info.image_base)?;
-        for section in &self.info.sections {
-            let sec_start = section.virtual_address;
-            let sec_size = section.virtual_size.max(section.raw_size);
-            if rva >= sec_start && rva < sec_start + sec_size {
-                let offset = section.raw_offset.checked_add(rva - sec_start)?;
-                return usize::try_from(offset).ok();
-            }
-        }
-        None
+        rva_to_file_offset(&self.info.sections, rva)
     }
 
     /// Dosya offsetini VA'ya çevirir.
@@ -287,8 +279,10 @@ impl Binary {
             let raw_start = usize::try_from(section.raw_offset).ok()?;
             let raw_end = raw_start.checked_add(usize::try_from(section.raw_size).ok()?)?;
             if offset >= raw_start && offset < raw_end {
-                let rva = section.virtual_address + (offset - raw_start) as u64;
-                return Some(self.info.image_base + rva);
+                let rva = section
+                    .virtual_address
+                    .checked_add((offset - raw_start) as u64)?;
+                return self.info.image_base.checked_add(rva);
             }
         }
         None
@@ -296,8 +290,26 @@ impl Binary {
 
     /// RVA'yı dosya offsetine çevirir.
     pub fn file_offset_from_rva(&self, rva: u64) -> Option<usize> {
-        self.va_to_file_offset(self.info.image_base + rva)
+        rva_to_file_offset(&self.info.sections, rva)
     }
+}
+
+/// RVA'yı, yalnızca bölümün ham (dosyada bulunan) verisi içinde arar.
+///
+/// Sanal padding (virtual_size > raw_size) dosyada yer kaplamadığı için
+/// dosya offsetine eşlenmez; aksi halde başka bir bölümün verisi okunur.
+fn rva_to_file_offset(sections: &[SectionInfo], rva: u64) -> Option<usize> {
+    for section in sections {
+        let Some(delta) = rva.checked_sub(section.virtual_address) else {
+            continue;
+        };
+        if delta >= section.raw_size {
+            continue;
+        }
+        let offset = section.raw_offset.checked_add(delta)?;
+        return usize::try_from(offset).ok();
+    }
+    None
 }
 
 /// PE header'ını ayrıştırıp sahiplenilmiş metadata üretir.
@@ -313,7 +325,7 @@ pub fn parse_pe(data: &[u8]) -> Result<PeImage> {
     }
 
     let image_base = pe.image_base as u64;
-    let entry_point = image_base + pe.entry as u64;
+    let entry_point = image_base.saturating_add(pe.entry as u64);
 
     let mut sections = Vec::with_capacity(pe.sections.len());
     for section in &pe.sections {
@@ -338,7 +350,7 @@ pub fn parse_pe(data: &[u8]) -> Result<PeImage> {
     let mut imports = Vec::new();
     for import in &pe.imports {
         let dll = import.dll.to_string();
-        let address = image_base + import.rva as u64;
+        let address = image_base.saturating_add(import.rva as u64);
         imports.push(ImportInfo {
             dll: dll.clone(),
             name: import.name.to_string(),
@@ -348,14 +360,15 @@ pub fn parse_pe(data: &[u8]) -> Result<PeImage> {
     }
 
     let mut exports = Vec::new();
-    for (ordinal, export) in pe.exports.iter().enumerate() {
+    let ordinals = export_ordinals(data, &pe, &sections);
+    for export in &pe.exports {
         let Some(name) = export.name else {
             continue;
         };
         exports.push(ExportInfo {
             name: name.to_string(),
-            address: image_base + export.rva as u64,
-            ordinal: ordinal as u16,
+            address: image_base.saturating_add(export.rva as u64),
+            ordinal: ordinals.get(name).copied().unwrap_or(0),
         });
     }
 
@@ -366,6 +379,41 @@ pub fn parse_pe(data: &[u8]) -> Result<PeImage> {
         imports,
         exports,
     })
+}
+
+/// Export isimlerini gerçek ordinal numaralarına eşler.
+///
+/// `goblin`'in `Export` yapısı ordinal taşımadığı için ordinal tablosu
+/// doğrudan export dizininden okunur; `enumerate()` indeksi ordinal değildir.
+fn export_ordinals(data: &[u8], pe: &PE, sections: &[SectionInfo]) -> HashMap<String, u16> {
+    let Some(export_data) = &pe.export_data else {
+        return HashMap::new();
+    };
+    let ordinal_base = export_data.export_directory_table.ordinal_base;
+    let mut ordinals = HashMap::new();
+
+    for (&name_rva, &ordinal_index) in export_data
+        .export_name_pointer_table
+        .iter()
+        .zip(export_data.export_ordinal_table.iter())
+    {
+        let Some(offset) = rva_to_file_offset(sections, u64::from(name_rva)) else {
+            continue;
+        };
+        let Some(rest) = data.get(offset..) else {
+            continue;
+        };
+        let Some(end) = rest.iter().position(|&byte| byte == 0) else {
+            continue;
+        };
+        let Ok(name) = std::str::from_utf8(&rest[..end]) else {
+            continue;
+        };
+        let ordinal = ordinal_base.saturating_add(u32::from(ordinal_index));
+        ordinals.insert(name.to_string(), u16::try_from(ordinal).unwrap_or(u16::MAX));
+    }
+
+    ordinals
 }
 
 /// Bölümün ham verisini dilimler (taşma olursa `None`).

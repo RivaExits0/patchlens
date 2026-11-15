@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::Parameters},
+    model::{Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
     service::serve_server,
     tool, tool_handler, tool_router, Error, ServerHandler,
 };
@@ -262,7 +263,11 @@ impl ServerState {
         let old = self.load_binary(Path::new(&params.old_path)).await?;
         let new = self.load_binary(Path::new(&params.new_path)).await?;
 
-        let limit = ServerState::clamp_limit(params.limit);
+        let limit = if params.limit == 0 {
+            DEFAULT_PAGE_SIZE
+        } else {
+            ServerState::clamp_limit(params.limit)
+        };
         let config = DiffConfig::default()
             .with_min_score(params.min_score.unwrap_or(0.75))
             .with_pagination(params.offset, limit);
@@ -315,8 +320,14 @@ impl ServerState {
         let new = self.load_binary(Path::new(&params.new_path)).await?;
 
         let addr = ServerState::resolve_address(&old, &params.function)?;
-        let explanation = explain_change(&old, &new, addr, params.limit, params.offset)
-            .map_err(|e| Error::invalid_params(format!("Değişim açıklanamadı: {e}"), None))?;
+        let explanation = explain_change(
+            &old,
+            &new,
+            addr,
+            params.limit.min(MAX_PAGE_SIZE),
+            params.offset,
+        )
+        .map_err(|e| Error::invalid_params(format!("Değişim açıklanamadı: {e}"), None))?;
 
         serde_json::to_string_pretty(&explanation)
             .map_err(|e| Error::internal_error(format!("Serileştirme hatası: {e}"), None))
@@ -370,7 +381,29 @@ impl ServerState {
 }
 
 #[tool_handler]
-impl ServerHandler for ServerState {}
+impl ServerHandler for ServerState {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            protocol_version: ProtocolVersion::default(),
+            // `#[tool_handler]` yalnızca `call_tool`/`list_tools` üretir;
+            // yetenekleri burada açıkça ilan etmek gerekir. Aksi halde
+            // istemciler araçları keşfetmek için izin alamaz.
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            server_info: Implementation {
+                name: "patchlens".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            },
+            instructions: Some(
+                "Patchlens: PE64 binary diff ve AOB imza analizi. \
+                 Araçlar: diff_builds (fonksiyon eşleştirme), check_signatures \
+                 (imza doğrulama + öneri), explain_change (tek fonksiyon diff'i), \
+                 ci_report (SARIF/JSON), export_offsets (C header/CT/JSON/SARIF). \
+                 Analiz tamamen statiktir; binary çalıştırılmaz."
+                    .to_string(),
+            ),
+        }
+    }
+}
 
 // --------------------------------------------------------------------------
 // GİRİŞ NOKTASI

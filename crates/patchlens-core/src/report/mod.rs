@@ -1,5 +1,7 @@
 //! Rapor üretimi: SARIF, JSON, C header ve Cheat Engine `.CT`.
 
+use std::collections::BTreeSet;
+
 use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -119,7 +121,7 @@ impl CiReport {
                 },
                 "locations": [{
                     "physicalLocation": {
-                        "artifactLocation": { "uri": new_binary.path().to_string_lossy() },
+                        "artifactLocation": { "uri": artifact_uri(new_binary) },
                         "region": { "startColumn": 1, "startLine": 1 }
                     }
                 }],
@@ -143,7 +145,7 @@ impl CiReport {
                 },
                 "locations": [{
                     "physicalLocation": {
-                        "artifactLocation": { "uri": old_binary.path().to_string_lossy() },
+                        "artifactLocation": { "uri": artifact_uri(old_binary) },
                         "region": { "startColumn": 1, "startLine": 1 }
                     }
                 }],
@@ -161,7 +163,7 @@ impl CiReport {
                 },
                 "locations": [{
                     "physicalLocation": {
-                        "artifactLocation": { "uri": new_binary.path().to_string_lossy() },
+                        "artifactLocation": { "uri": artifact_uri(new_binary) },
                         "region": { "startColumn": 1, "startLine": 1 }
                     }
                 }],
@@ -172,14 +174,15 @@ impl CiReport {
         if let Some(set) = signatures {
             let checks = SignatureEngine::new().check(new_binary, set);
             for check in &checks {
-                let level = match check.status {
-                    SignatureStatus::Broken => "error",
-                    SignatureStatus::Ambiguous => "error",
-                    SignatureStatus::Moved => "warning",
-                    SignatureStatus::Ok => "note",
+                let (rule_id, level) = match check.status {
+                    SignatureStatus::Broken => ("signature-broken", "error"),
+                    SignatureStatus::Ambiguous => ("signature-ambiguous", "error"),
+                    SignatureStatus::Moved => ("signature-moved", "warning"),
+                    // Sağlıklı imzalar SARIF sonucu üretmez; CI gürültüsü olmaz.
+                    SignatureStatus::Ok => continue,
                 };
                 results.push(json!({
-                        "ruleId": "signature-broken",
+                        "ruleId": rule_id,
                         "level": level,
                         "message": {
                             "text": format!(
@@ -191,7 +194,7 @@ impl CiReport {
                         },
                         "locations": [{
                             "physicalLocation": {
-                                "artifactLocation": { "uri": new_binary.path().to_string_lossy() },
+                                "artifactLocation": { "uri": artifact_uri(new_binary) },
                                 "region": { "startColumn": 1, "startLine": 1 }
                             }
                         }],
@@ -218,6 +221,8 @@ impl CiReport {
                             { "id": "function-removed", "shortDescription": { "text": "Yeni build'de kaldırılan fonksiyon" } },
                             { "id": "function-added", "shortDescription": { "text": "Yeni build'de eklenen fonksiyon" } },
                             { "id": "signature-broken", "shortDescription": { "text": "Artık eşleşmeyen imza" } },
+                            { "id": "signature-moved", "shortDescription": { "text": "Yeni konumda bulunan imza" } },
+                            { "id": "signature-ambiguous", "shortDescription": { "text": "Birden fazla eşleşen imza" } },
                         ]
                     }
                 },
@@ -282,7 +287,7 @@ impl CiReport {
             let Some(new_f) = &m.new else { continue };
             entries.push(format!(
                 "<CheatEntry>\n  <Description>{}</Description>\n  <VariableType>8 Bytes</VariableType>\n  <Address>0x{:X}</Address>\n  <Comment>0x{:X} adresinden değişti (benzerlik: {:.1}%)</Comment>\n</CheatEntry>",
-                display_name(new_f),
+                xml_escape(&display_name(new_f)),
                 new_f.address,
                 m.old.as_ref().map(|o| o.address).unwrap_or(0),
                 m.score * 100.0
@@ -293,7 +298,7 @@ impl CiReport {
             let Some(new_f) = &m.new else { continue };
             entries.push(format!(
                 "<CheatEntry>\n  <Description>{}</Description>\n  <VariableType>8 Bytes</VariableType>\n  <Address>0x{:X}</Address>\n  <Comment>Yeni build'de eklendi</Comment>\n</CheatEntry>",
-                display_name(new_f),
+                xml_escape(&display_name(new_f)),
                 new_f.address
             ));
         }
@@ -312,7 +317,8 @@ pub fn export_offsets(
     signatures: &SignatureSet,
     format: ExportFormat,
 ) -> Result<String> {
-    let diff = diff_binaries(old_binary, new_binary, DiffConfig::default());
+    // Raporlar tam listeyi içermeli; varsayılan sayfalama (100) veri kaybettirir.
+    let diff = diff_binaries(old_binary, new_binary, DiffConfig::unpaginated());
     CiReport::generate(&diff, old_binary, new_binary, Some(signatures), format)
 }
 
@@ -324,19 +330,24 @@ pub fn explain_change(
     limit: usize,
     offset: usize,
 ) -> Result<ChangeExplanation> {
-    let old_func = old_binary.function_by_va(function_addr);
-    let new_func = resolve_new_function(old_binary, new_binary, function_addr);
+    let (old_func, new_func) = resolve_function_pair(old_binary, new_binary, function_addr);
+
+    if old_func.is_none() && new_func.is_none() {
+        return Err(anyhow::anyhow!(
+            crate::error::PatchlensError::FunctionNotFound(format!("0x{function_addr:X}"))
+        ));
+    }
 
     let mut explanation = ChangeExplanation {
         function_address: function_addr,
-        old_function: old_func.cloned(),
-        new_function: new_func.cloned(),
+        old_function: old_func.clone(),
+        new_function: new_func.clone(),
         disassembly_diff: Vec::new(),
         basic_block_changes: Vec::new(),
         instruction_changes: Vec::new(),
     };
 
-    match (old_func, new_func) {
+    match (&old_func, &new_func) {
         (Some(old_f), Some(new_f)) => {
             explanation.disassembly_diff = diff_disassembly(old_f, new_f, limit, offset);
             explanation.basic_block_changes = diff_basic_blocks(old_f, new_f);
@@ -368,24 +379,59 @@ pub fn explain_change(
     Ok(explanation)
 }
 
-/// Eski adresi yeni build'deki karşılığına çevirir.
-fn resolve_new_function<'a>(
+/// Verilen adresi her iki build'de de karşılık gelen fonksiyon çiftine çözer.
+///
+/// Adres eski build'de varsa yeni karşılığı, yoksa yeni build'deki karşılığı
+/// üzerinden eşleştirme yapılır. Eşleştirme sayfalamasız çalışır; aksi halde
+/// 100'den fazla fonksiyon içeren build'lerde yanlış sonuç döner.
+fn resolve_function_pair(
     old_binary: &Binary,
-    new_binary: &'a Binary,
-    function_addr: u64,
-) -> Option<&'a FunctionInfo> {
-    if let Some(func) = new_binary.function_by_va(function_addr) {
-        return Some(func);
+    new_binary: &Binary,
+    address: u64,
+) -> (Option<FunctionInfo>, Option<FunctionInfo>) {
+    let old_at_address = old_binary.function_by_va(address).cloned();
+    let new_at_address = new_binary.function_by_va(address).cloned();
+
+    if old_at_address.is_some() && new_at_address.is_some() {
+        // Aynı VA iki build'de farklı fonksiyonlara denk gelebilir; byte'lar
+        // eşleşmiyorsa gerçek eşleşmeyi diff üzerinden bul.
+        let (Some(old_func), Some(new_func)) = (&old_at_address, &new_at_address) else {
+            unreachable!("her iki değer de Some");
+        };
+        if old_func.opcode_hash == new_func.opcode_hash && old_func.size == new_func.size {
+            return (old_at_address, new_at_address);
+        }
     }
-    let diff = diff_binaries(old_binary, new_binary, DiffConfig::default());
-    for m in diff.unchanged.iter().chain(diff.modified.iter()) {
-        if let (Some(old_f), Some(new_f)) = (&m.old, &m.new) {
-            if old_f.address == function_addr {
-                return new_binary.function_by_va(new_f.address);
+
+    let diff = diff_binaries(old_binary, new_binary, DiffConfig::unpaginated());
+    let mut old_func = old_at_address.clone();
+    let mut new_func = new_at_address.clone();
+
+    if old_at_address.is_some() {
+        // Eski adres sorgusu: yeni karşılığı diff'ten al.
+        new_func = None;
+        for matched in diff.unchanged.iter().chain(diff.modified.iter()) {
+            if let (Some(old_f), Some(new_f)) = (&matched.old, &matched.new) {
+                if old_f.address == address {
+                    new_func = Some(new_f.clone());
+                    break;
+                }
+            }
+        }
+    } else if new_at_address.is_some() {
+        // Yeni adres sorgusu: eski karşılığı diff'ten al.
+        old_func = None;
+        for matched in diff.unchanged.iter().chain(diff.modified.iter()) {
+            if let (Some(old_f), Some(new_f)) = (&matched.old, &matched.new) {
+                if new_f.address == address {
+                    old_func = Some(old_f.clone());
+                    break;
+                }
             }
         }
     }
-    None
+
+    (old_func, new_func)
 }
 
 /// Disassembly fark satırı.
@@ -476,6 +522,10 @@ pub struct InstructionChange {
 }
 
 /// İki fonksiyonun disassembly'sini karşılaştırır.
+///
+/// Talimatlar mutlak adresle değil, sıra (index) ile hizalanır. Fonksiyon
+/// build'ler arasında taşındığında adresler farklı olacağı için adres
+/// karşılaştırması yanlışlıkla tüm satırları "silindi/eklendi" gösterirdi.
 fn diff_disassembly(
     old: &FunctionInfo,
     new: &FunctionInfo,
@@ -491,56 +541,39 @@ fn diff_disassembly(
         .unwrap_or_default();
 
     let mut lines = Vec::new();
-    let mut old_idx = 0usize;
-    let mut new_idx = 0usize;
-
-    while old_idx < old_insns.len() || new_idx < new_insns.len() {
-        match (old_insns.get(old_idx), new_insns.get(new_idx)) {
-            (Some(o), Some(n)) if o.address == n.address && o.bytes == n.bytes => {
+    for index in 0..old_insns.len().max(new_insns.len()) {
+        match (old_insns.get(index), new_insns.get(index)) {
+            (Some(o), Some(n)) => {
+                let change_type = if o.bytes == n.bytes {
+                    ChangeType::Unchanged
+                } else {
+                    ChangeType::Modified
+                };
                 lines.push(DisassemblyLine {
                     address: o.address,
                     old_bytes: Some(hex::encode(&o.bytes)),
                     new_bytes: Some(hex::encode(&n.bytes)),
                     old_mnemonic: Some(o.mnemonic.clone()),
                     new_mnemonic: Some(n.mnemonic.clone()),
-                    change_type: ChangeType::Unchanged,
+                    change_type,
                 });
-                old_idx += 1;
-                new_idx += 1;
             }
-            (Some(o), Some(n)) if o.address <= n.address => {
-                lines.push(DisassemblyLine {
-                    address: o.address,
-                    old_bytes: Some(hex::encode(&o.bytes)),
-                    new_bytes: None,
-                    old_mnemonic: Some(o.mnemonic.clone()),
-                    new_mnemonic: None,
-                    change_type: ChangeType::Removed,
-                });
-                old_idx += 1;
-            }
-            (Some(o), None) => {
-                lines.push(DisassemblyLine {
-                    address: o.address,
-                    old_bytes: Some(hex::encode(&o.bytes)),
-                    new_bytes: None,
-                    old_mnemonic: Some(o.mnemonic.clone()),
-                    new_mnemonic: None,
-                    change_type: ChangeType::Removed,
-                });
-                old_idx += 1;
-            }
-            (_, Some(n)) => {
-                lines.push(DisassemblyLine {
-                    address: n.address,
-                    old_bytes: None,
-                    new_bytes: Some(hex::encode(&n.bytes)),
-                    old_mnemonic: None,
-                    new_mnemonic: Some(n.mnemonic.clone()),
-                    change_type: ChangeType::Added,
-                });
-                new_idx += 1;
-            }
+            (Some(o), None) => lines.push(DisassemblyLine {
+                address: o.address,
+                old_bytes: Some(hex::encode(&o.bytes)),
+                new_bytes: None,
+                old_mnemonic: Some(o.mnemonic.clone()),
+                new_mnemonic: None,
+                change_type: ChangeType::Removed,
+            }),
+            (None, Some(n)) => lines.push(DisassemblyLine {
+                address: n.address,
+                old_bytes: None,
+                new_bytes: Some(hex::encode(&n.bytes)),
+                old_mnemonic: None,
+                new_mnemonic: Some(n.mnemonic.clone()),
+                change_type: ChangeType::Added,
+            }),
             (None, None) => break,
         }
     }
@@ -548,27 +581,86 @@ fn diff_disassembly(
     lines.into_iter().skip(offset).take(limit).collect()
 }
 
+/// Fonksiyonun gerçek basic block aralıklarını (başlangıç, bitiş) çıkarır.
+fn basic_block_ranges(func: &FunctionInfo) -> Vec<(u64, u64)> {
+    let end = func.address.saturating_add(func.size as u64);
+    let mut starts = BTreeSet::new();
+    starts.insert(func.address);
+
+    if let Ok(instructions) = FunctionFingerprinter::new().disassemble(&func.bytes, func.address) {
+        for insn in &instructions {
+            let next = insn.end_address();
+            let is_terminator = insn.mnemonic == "ret" || insn.mnemonic.starts_with('j');
+            if is_terminator && next < end {
+                starts.insert(next);
+            }
+            if insn.mnemonic.starts_with('j') {
+                if let Some(target) = insn.target {
+                    if target >= func.address && target < end {
+                        starts.insert(target);
+                    }
+                }
+            }
+        }
+    }
+
+    let starts: Vec<u64> = starts.into_iter().filter(|&start| start < end).collect();
+    if starts.is_empty() {
+        return vec![(func.address, end)];
+    }
+    starts
+        .iter()
+        .enumerate()
+        .map(|(index, &start)| (start, starts.get(index + 1).copied().unwrap_or(end)))
+        .collect()
+}
+
+/// Fonksiyon byte'larından verilen aralığı dilimler.
+fn block_bytes(func: &FunctionInfo, start: u64, end: u64) -> &[u8] {
+    let from = start.saturating_sub(func.address) as usize;
+    let to = end.saturating_sub(func.address) as usize;
+    func.bytes.get(from..to).unwrap_or_default()
+}
+
 /// Basic block değişikliklerini üretir.
 fn diff_basic_blocks(old: &FunctionInfo, new: &FunctionInfo) -> Vec<BasicBlockChange> {
+    let old_blocks = basic_block_ranges(old);
+    let new_blocks = basic_block_ranges(new);
     let mut changes = Vec::new();
-    let max = old.block_count.max(new.block_count);
-    for index in 0..max {
-        let old_start = old.address + index as u64 * 16;
-        let new_start = new.address + index as u64 * 16;
-        let change_type = if index < old.block_count.min(new.block_count) {
-            ChangeType::Modified
-        } else if index < old.block_count {
-            ChangeType::Removed
-        } else {
-            ChangeType::Added
-        };
-        changes.push(BasicBlockChange {
-            old_start,
-            new_start,
-            change_type,
-            size_delta: new.size as isize - old.size as isize,
-        });
+
+    for index in 0..old_blocks.len().max(new_blocks.len()) {
+        match (old_blocks.get(index), new_blocks.get(index)) {
+            (Some(&(old_start, old_end)), Some(&(new_start, new_end))) => {
+                let change_type = if block_bytes(old, old_start, old_end)
+                    == block_bytes(new, new_start, new_end)
+                {
+                    ChangeType::Unchanged
+                } else {
+                    ChangeType::Modified
+                };
+                changes.push(BasicBlockChange {
+                    old_start,
+                    new_start,
+                    change_type,
+                    size_delta: (new_end - new_start) as isize - (old_end - old_start) as isize,
+                });
+            }
+            (Some(&(old_start, old_end)), None) => changes.push(BasicBlockChange {
+                old_start,
+                new_start: 0,
+                change_type: ChangeType::Removed,
+                size_delta: -((old_end - old_start) as isize),
+            }),
+            (None, Some(&(new_start, new_end))) => changes.push(BasicBlockChange {
+                old_start: 0,
+                new_start,
+                change_type: ChangeType::Added,
+                size_delta: (new_end - new_start) as isize,
+            }),
+            (None, None) => break,
+        }
     }
+
     changes
 }
 
@@ -588,48 +680,33 @@ fn diff_instructions(
         .unwrap_or_default();
 
     let mut changes = Vec::new();
-    let mut old_idx = 0usize;
-    let mut new_idx = 0usize;
-
-    while old_idx < old_insns.len() || new_idx < new_insns.len() {
-        match (old_insns.get(old_idx), new_insns.get(new_idx)) {
-            (Some(o), Some(n)) if o.address == n.address && o.bytes == n.bytes => {
-                old_idx += 1;
-                new_idx += 1;
-            }
-            (Some(o), Some(n)) if o.address <= n.address => {
-                changes.push(InstructionChange {
-                    address: o.address,
-                    old_bytes: Some(hex::encode(&o.bytes)),
-                    new_bytes: None,
-                    old_mnemonic: Some(o.mnemonic.clone()),
-                    new_mnemonic: None,
-                    change_type: ChangeType::Removed,
-                });
-                old_idx += 1;
-            }
-            (Some(o), None) => {
-                changes.push(InstructionChange {
-                    address: o.address,
-                    old_bytes: Some(hex::encode(&o.bytes)),
-                    new_bytes: None,
-                    old_mnemonic: Some(o.mnemonic.clone()),
-                    new_mnemonic: None,
-                    change_type: ChangeType::Removed,
-                });
-                old_idx += 1;
-            }
-            (_, Some(n)) => {
-                changes.push(InstructionChange {
-                    address: n.address,
-                    old_bytes: None,
-                    new_bytes: Some(hex::encode(&n.bytes)),
-                    old_mnemonic: None,
-                    new_mnemonic: Some(n.mnemonic.clone()),
-                    change_type: ChangeType::Added,
-                });
-                new_idx += 1;
-            }
+    for index in 0..old_insns.len().max(new_insns.len()) {
+        match (old_insns.get(index), new_insns.get(index)) {
+            (Some(o), Some(n)) if o.bytes == n.bytes => continue,
+            (Some(o), Some(n)) => changes.push(InstructionChange {
+                address: o.address,
+                old_bytes: Some(hex::encode(&o.bytes)),
+                new_bytes: Some(hex::encode(&n.bytes)),
+                old_mnemonic: Some(o.mnemonic.clone()),
+                new_mnemonic: Some(n.mnemonic.clone()),
+                change_type: ChangeType::Modified,
+            }),
+            (Some(o), None) => changes.push(InstructionChange {
+                address: o.address,
+                old_bytes: Some(hex::encode(&o.bytes)),
+                new_bytes: None,
+                old_mnemonic: Some(o.mnemonic.clone()),
+                new_mnemonic: None,
+                change_type: ChangeType::Removed,
+            }),
+            (None, Some(n)) => changes.push(InstructionChange {
+                address: n.address,
+                old_bytes: None,
+                new_bytes: Some(hex::encode(&n.bytes)),
+                old_mnemonic: None,
+                new_mnemonic: Some(n.mnemonic.clone()),
+                change_type: ChangeType::Added,
+            }),
             (None, None) => break,
         }
     }
@@ -644,6 +721,21 @@ fn display_name(func: &FunctionInfo) -> String {
         .unwrap_or_else(|| format!("sub_{:X}", func.address))
 }
 
+/// SARIF için platformdan bağımsız (ileri eğik çizgili) artifact URI'si üretir.
+fn artifact_uri(binary: &Binary) -> String {
+    binary.path().to_string_lossy().replace('\\', "/")
+}
+
+/// XML metin/attribute değerlerini kaçışlar.
+fn xml_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 /// C makro adı için sanitize eder.
 fn sanitize_macro(name: &str) -> String {
     let cleaned: String = name
@@ -653,6 +745,13 @@ fn sanitize_macro(name: &str) -> String {
     let cleaned = cleaned.trim_matches('_').to_uppercase();
     if cleaned.is_empty() {
         "FUNC_UNKNOWN".to_string()
+    } else if cleaned
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_digit())
+    {
+        // C makro adı rakamla başlayamaz.
+        format!("FUNC_{cleaned}")
     } else {
         cleaned
     }

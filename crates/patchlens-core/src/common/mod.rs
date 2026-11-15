@@ -104,6 +104,6 @@ pub struct InstructionInfo {
 impl InstructionInfo {
     /// Talimatın bir sonraki adresi.
     pub fn end_address(&self) -> u64 {
-        self.address + self.size as u64
+        self.address.saturating_add(self.size as u64)
     }
 }
