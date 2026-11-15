@@ -63,9 +63,9 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-targets
 
-      - name: Run benchmarks (Linux only)
+      - name: Compile benchmarks (Linux only)
         if: runner.os == 'Linux'
-        run: cargo bench --workspace -- --no-run
+        run: cargo bench --workspace --no-run
 
   release:
     name: Release
