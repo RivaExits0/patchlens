@@ -20,6 +20,37 @@ fn fixture_paths(dir: &Path) -> (PathBuf, PathBuf) {
 }
 
 #[tokio::test]
+#[ignore = "requires PATCHLENS_OLD and PATCHLENS_NEW env vars pointing at two PE64 files"]
+async fn real_pe_diff() {
+    let old = std::env::var("PATCHLENS_OLD").expect("PATCHLENS_OLD not set");
+    let new = std::env::var("PATCHLENS_NEW").expect("PATCHLENS_NEW not set");
+
+    let patchlens = Patchlens::new();
+    let old_bin = patchlens
+        .analyze_binary(Path::new(&old))
+        .await
+        .expect("old binary should load");
+    let new_bin = patchlens
+        .analyze_binary(Path::new(&new))
+        .await
+        .expect("new binary should load");
+
+    assert!(
+        !old_bin.functions().is_empty(),
+        "old binary has no functions"
+    );
+    assert!(
+        !new_bin.functions().is_empty(),
+        "new binary has no functions"
+    );
+
+    let diff = patchlens.diff(&old_bin, &new_bin, DiffConfig::default());
+    // The diff must be produced without panicking; totals must be populated.
+    assert!(diff.old_total > 0);
+    assert!(diff.new_total > 0);
+}
+
+#[tokio::test]
 async fn diff_basic() {
     let dir = fixtures();
     let (old_path, new_path) = fixture_paths(dir.path());
@@ -445,7 +476,7 @@ async fn unknown_function_explain_returns_error() {
         .explain_change(&old_bin, &new_bin, 0xDEAD_BEEF, 100, 0)
         .unwrap_err();
     assert!(
-        format!("{error:#}").contains("Fonksiyon bulunamadı"),
+        format!("{error:#}").contains("Function not found"),
         "beklenen hata: {error:#}"
     );
 }

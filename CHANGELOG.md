@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - 2026-11-14
+## [0.1.0] - 2026-11-15
 
 ### Added
 - Initial release of Patchlens
@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PE32+ (x64) support with mmap-based loading
 - Cross-platform: Linux, Windows, macOS
 - Comprehensive test suite with synthetic PE fixtures
+- Criterion benchmarks (`crates/patchlens-core/benches/diff_bench.rs`)
+- cargo-fuzz target (`fuzz/fuzz_targets/fuzz_pe_parse.rs`)
+- Release workflow (`.github/workflows/release.yml`) for `v*` tags
+- Demo script (`docs/demo-script.md`)
+- Ignored real-PE smoke test (`PATCHLENS_OLD` / `PATCHLENS_NEW`)
 - Benchmark suite with Criterion
 
 ### Security

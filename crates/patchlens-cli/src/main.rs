@@ -10,8 +10,8 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use patchlens_core::report::{explain_change, export_offsets, CiReport, ExportFormat};
 use patchlens_core::{Binary, DiffConfig, Patchlens, Signature, SignatureSet, SignatureStatus};
-use patchlens_report::{ci_report::CiReport, explain_change, export_offsets, ExportFormat};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -353,7 +353,7 @@ fn resolve_function(old_binary: &Binary, new_binary: &Binary, query: &str) -> Re
         return Ok(addr);
     }
 
-    anyhow::bail!("Fonksiyon bulunamadı: {query} (hex adres veya export ismi deneyin)")
+    anyhow::bail!("Function not found: {query} (try a 0x address or export name)")
 }
 
 /// Diff çıktısını metin olarak biçimlendirir.

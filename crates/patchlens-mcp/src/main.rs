@@ -1,4 +1,4 @@
-//! Patchlens MCP Sunucusu: binary diff ve imza analizi (rmcp 0.2.1, stdio).
+//! Patchlens MCP Server: binary diff and signature analysis (rmcp 0.2.1, stdio).
 //!
 //! Tam olarak 5 araç sunar:
 //!   - diff_builds
@@ -9,7 +9,7 @@
 //!
 //! Sayfalama: varsayılan 50, maksimum 500. Önbellek `Patchlens`/`AnalysisCache`
 //! üzerinden yol+boyut+mtime ile anahtarlanır. Hata mesajları Türkçe ve
-//! eyleme dönüştürülür (ör. "Dosya PE değil. Desteklenen: PE x64").
+//! eyleme dönüştürülür (ör. "Not a PE file. Supported: PE x64").
 
 use std::future::Future;
 use std::path::Path;
@@ -29,8 +29,8 @@ use tracing::info;
 use tracing_subscriber::FmtSubscriber;
 
 use patchlens_core::report::summarize_signature_checks;
+use patchlens_core::report::{explain_change, export_offsets};
 use patchlens_core::{Binary, DiffConfig, ExportFormat, Patchlens, SignatureSet};
-use patchlens_report::{explain_change, export_offsets};
 
 /// Varsayılan sayfa boyutu.
 const DEFAULT_PAGE_SIZE: usize = 50;
@@ -85,7 +85,7 @@ impl ServerState {
             return Ok(addr);
         }
         Err(Error::invalid_params(
-            format!("Fonksiyon bulunamadı: {query} (0x adres veya export ismi deneyin)"),
+            format!("Function not found: {query} (try a 0x address or export name)"),
             None,
         ))
     }

@@ -14,7 +14,6 @@ path = "src/main.rs"
 
 [dependencies]
 patchlens-core = { path = "../patchlens-core" }
-patchlens-report = { path = "../patchlens-report" }
 clap = { workspace = true, features = ["derive", "env"] }
 anyhow = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

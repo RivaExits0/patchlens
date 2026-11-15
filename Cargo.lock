@@ -819,7 +819,6 @@ dependencies = [
  "anyhow",
  "clap",
  "patchlens-core",
- "patchlens-report",
  "serde",
  "serde_json",
  "tokio",
@@ -860,7 +859,6 @@ dependencies = [
  "anyhow",
  "once_cell",
  "patchlens-core",
- "patchlens-report",
  "rmcp",
  "schemars",
  "serde",
@@ -869,21 +867,6 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "patchlens-report"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "hex",
- "insta",
- "make_fixtures",
- "patchlens-core",
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]
