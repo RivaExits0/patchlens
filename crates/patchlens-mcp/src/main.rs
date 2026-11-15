@@ -9,7 +9,7 @@
 //!
 //! Sayfalama: varsayılan 50, maksimum 500. Önbellek `Patchlens`/`AnalysisCache`
 //! üzerinden yol+boyut+mtime ile anahtarlanır. Hata mesajları Türkçe ve
-//! eyleme dönüştürülür (ör. "Dosya PE değil. Desteklenen: PE x64").
+//! eyleme dönüştürülür (ör. "Not a PE file. Supported: PE x64").
 
 use std::future::Future;
 use std::path::Path;

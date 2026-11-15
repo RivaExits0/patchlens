@@ -308,7 +308,7 @@ patchlens/
 │   ├── patchlens-cli/      # CLI entry point (clap): diff / sigs / explain / export
 │   ├── patchlens-mcp/      # MCP server (rmcp, stdio): 5 tools
 ├── tools/make_fixtures/    # Synthetic PE64 fixture generator (lib + bin)
-├── .github/workflows/ci.yml # CI: fmt --check, clippy -D warnings, build, test (ubuntu + windows)
+├── .github/workflows/ci.yml # CI: fmt --check, clippy -D warnings, build, test (ubuntu + windows + macos)
 └── README.md
 ```
 
